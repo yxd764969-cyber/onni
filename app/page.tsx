@@ -90,8 +90,14 @@ type Block =
 function parseBlocks(raw: string): Block[] {
   if (!raw) return [];
 
-  // 清洗：去掉 AI 偶尔乱打的 ``` 代码块符号
-  raw = raw.replace(/```[a-z]*\n?/gi, "").replace(/```/g, "");
+  // 清洗 markdown 符号：AI 有时会输出 ### / ▶ / --- 这类
+  raw = raw
+    .replace(/```[a-z]*\n?/gi, "")
+    .replace(/```/g, "")
+    .replace(/^#{1,6}\s*/gm, "") // 去掉行首 ### / ## / #
+    .replace(/^▶\s*/gm, "· ") // ▶ 转成 ·
+    .replace(/^---+$/gm, "") // 单独一行的 ---
+    .replace(/\*\*(.+?)\*\*/g, "$1"); // 去掉 **粗体**
 
   const lines = raw.split("\n");
   const blocks: Block[] = [];
@@ -114,14 +120,26 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    if (l.startsWith("📇") || l.startsWith("📌")) {
+    // 生词卡：emoji 或中文"生词/关键词/单词"标题
+    if (
+      l.startsWith("📇") ||
+      l.startsWith("📌") ||
+      /^(①|②|③|④|⑤)?\s*生词卡片/.test(l) ||
+      /^(①|②|③|④|⑤)?\s*关键词/.test(l) ||
+      /^(①|②|③|④|⑤)?\s*核心生词/.test(l)
+    ) {
       flush();
       mode = "vocab";
       buffer.push(line);
       continue;
     }
 
-    if (l.startsWith("📚") || l.startsWith("【")) {
+    // 语法卡：emoji 或中文"语法"标题
+    if (
+      l.startsWith("📚") ||
+      l.startsWith("【") ||
+      /^(①|②|③|④|⑤)?\s*语法(小贴士|讲解|点)?/.test(l)
+    ) {
       if (mode !== "grammar") {
         flush();
         mode = "grammar";
@@ -130,7 +148,11 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    if (l.startsWith("🌸")) {
+    // 纠错卡
+    if (
+      l.startsWith("🌸") ||
+      /^(①|②|③|④|⑤)?\s*(温柔)?纠错/.test(l)
+    ) {
       flush();
       mode = "correction";
       buffer.push(line);
