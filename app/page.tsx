@@ -396,8 +396,6 @@ function BlockCard({ block }: { block: Block }) {
       );
     case "hook":
       return <div style={styles.hookBubble}>{block.content}</div>;
-    default:
-      return <div style={styles.aiBubble}>{block.content}</div>;
   }
 }
 
