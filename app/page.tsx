@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, CSSProperties } from "react";
+import { initAnalytics, identifyUser, track } from "./lib/analytics";
 
 const scenarios = [
   {
@@ -9,6 +10,12 @@ const scenarios = [
     emoji: "👋",
     opening: "안녕하세요, 처음 뵙겠습니다. 이름이 어떻게 되세요?",
     openingTranslation: "你好，初次见面。请问你叫什么名字？",
+    placeholder: "例：'很高兴认识你' 用韩语怎么说",
+    starters: [
+      "'很高兴认识你' 用韩语怎么说",
+      "怎么用韩语问别人年龄",
+      "加微信/联系方式用韩语怎么说",
+    ],
   },
   {
     id: "02",
@@ -16,6 +23,12 @@ const scenarios = [
     emoji: "☕",
     opening: "어서 오세요! 뭐 드릴까요?",
     openingTranslation: "欢迎光临！有什么可以为您服务的吗？",
+    placeholder: "例：'冰美式' 用韩语怎么说",
+    starters: [
+      "'冰美式' 用韩语怎么说",
+      "'加冰、少糖' 用韩语怎么说",
+      "'外带' 用韩语怎么说",
+    ],
   },
   {
     id: "03",
@@ -23,6 +36,12 @@ const scenarios = [
     emoji: "⭐",
     opening: "안녕하세요! 팬이에요. 사인해 주세요!",
     openingTranslation: "你好！我是粉丝。请给我签个名吧！",
+    placeholder: "例：'我是你的粉丝' 用韩语怎么说",
+    starters: [
+      "'我是你的粉丝' 用韩语怎么说",
+      "'请给我签名' 用韩语怎么说",
+      "'我最爱你' 用韩语怎么说",
+    ],
   },
   {
     id: "04",
@@ -30,6 +49,12 @@ const scenarios = [
     emoji: "🗺️",
     opening: "안녕하세요, 길을 잃었어요. 명동으로 가는 길을 알려주세요.",
     openingTranslation: "你好，我迷路了。请告诉我去明洞的路怎么走。",
+    placeholder: "例：'地铁怎么坐' 用韩语怎么说",
+    starters: [
+      "'地铁怎么坐' 用韩语怎么说",
+      "打车常用韩语",
+      "'去哪里' 用韩语怎么问",
+    ],
   },
   {
     id: "05",
@@ -37,6 +62,12 @@ const scenarios = [
     emoji: "🍜",
     opening: "안녕하세요! 메뉴판 좀 볼 수 있을까요?",
     openingTranslation: "你好！能给我看一下菜单吗？",
+    placeholder: "例：'不要辣' 用韩语怎么说",
+    starters: [
+      "'不要辣' 用韩语怎么说",
+      "'再来一份' 用韩语怎么说",
+      "'结账' 用韩语怎么说",
+    ],
   },
 ];
 
@@ -44,9 +75,11 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   correctionCard?: any;
+  retryable?: boolean; // 出错时可点重试
+  retryQuery?: string; // 出错时保存原始 query 供重试
 };
 
-// ============ 智能内容解析：把 AI 回复拆成 段落 / 关键词卡 / 语法卡 / 纠错卡 / 钩子 ============
+// ============ 智能内容解析 ============
 type Block =
   | { type: "text"; content: string }
   | { type: "vocab"; content: string }
@@ -56,6 +89,10 @@ type Block =
 
 function parseBlocks(raw: string): Block[] {
   if (!raw) return [];
+
+  // 清洗：去掉 AI 偶尔乱打的 ``` 代码块符号
+  raw = raw.replace(/```[a-z]*\n?/gi, "").replace(/```/g, "");
+
   const lines = raw.split("\n");
   const blocks: Block[] = [];
   let buffer: string[] = [];
@@ -70,7 +107,6 @@ function parseBlocks(raw: string): Block[] {
   for (const line of lines) {
     const l = line.trim();
 
-    // 钩子：以 👇 开头的最后一句
     if (l.startsWith("👇")) {
       flush();
       mode = "hook";
@@ -78,7 +114,6 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    // 生词卡
     if (l.startsWith("📇") || l.startsWith("📌")) {
       flush();
       mode = "vocab";
@@ -86,9 +121,7 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    // 语法卡
     if (l.startsWith("📚") || l.startsWith("【")) {
-      // 【】通常出现在语法讲解
       if (mode !== "grammar") {
         flush();
         mode = "grammar";
@@ -97,7 +130,6 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    // 纠错卡
     if (l.startsWith("🌸")) {
       flush();
       mode = "correction";
@@ -105,15 +137,22 @@ function parseBlocks(raw: string): Block[] {
       continue;
     }
 
-    // 空行且当前 buffer 有内容 → flush 回到 text
     if (l === "" && buffer.length > 0) {
       buffer.push("");
       continue;
     }
 
-    // 从特殊卡回到普通文本：遇到不属于特殊卡的行
-    if ((mode === "vocab" || mode === "grammar" || mode === "correction") && !l.startsWith("📇") && !l.startsWith("📌") && !l.startsWith("📚") && !l.startsWith("🌸") && !l.startsWith("【") && !l.startsWith("·") && !l.startsWith("-") && !l.startsWith("•")) {
-      // 判断这行是否明显是新段落
+    if (
+      (mode === "vocab" || mode === "grammar" || mode === "correction") &&
+      !l.startsWith("📇") &&
+      !l.startsWith("📌") &&
+      !l.startsWith("📚") &&
+      !l.startsWith("🌸") &&
+      !l.startsWith("【") &&
+      !l.startsWith("·") &&
+      !l.startsWith("-") &&
+      !l.startsWith("•")
+    ) {
       if (l.length > 0 && buffer.length > 3) {
         flush();
         mode = "text";
@@ -124,7 +163,65 @@ function parseBlocks(raw: string): Block[] {
   }
   flush();
 
-  return blocks.filter((b) => b.content.length > 0);
+  const filtered = blocks.filter((b) => b.content.length > 0);
+
+  // 兜底：如果最后一个 block 是 text 且看起来像追问，自动升级为 hook
+  // 判定条件：含问号（不必须结尾）+ 长度合适 + 含追问关键词
+  if (filtered.length > 0) {
+    const last = filtered[filtered.length - 1];
+    if (last.type === "text") {
+      const trimmed = last.content.trim();
+      const hasQuestionMark = /[？?]/.test(trimmed);
+      const hasFollowupCue =
+        /(吗|呢|还想|还有|比如|试试|要不要|想学|下一句|怎么说|哪个|想不想|要不|试着)/.test(trimmed);
+      const lengthOk = trimmed.length >= 4 && trimmed.length < 150;
+
+      if (hasQuestionMark && hasFollowupCue && lengthOk) {
+        filtered[filtered.length - 1] = {
+          type: "hook",
+          content: trimmed.startsWith("👇") ? trimmed : `👇 ${trimmed}`,
+        };
+      }
+    }
+  }
+
+  return filtered;
+}
+
+// 从钩子文本里抽取"可以问什么" —— 转换为清晰的单一问题
+function extractHookQuery(hookText: string): string {
+  let text = hookText.replace(/^👇\s*/, "").trim();
+
+  // 去掉末尾的 emoji（避免污染 query）
+  text = text.replace(/[🎯☕🛍️🚇👋🌸😉👍🎓💡✨🎉📇📚]+\s*$/g, "").trim();
+
+  // 复合问句：包含 "或者" 拆分的两段问题 → 只取第一段
+  const orSplit = text.split(/[?？]\s*[，,]?\s*或者[^？?]*[?？]?/);
+  if (orSplit.length > 1 && orSplit[0].length > 0) {
+    text = orSplit[0].trim() + "？";
+  }
+
+  // "还有 XX 想学吗？比如 A、B、C" → 抽取第一个选项
+  const bihuMatch = text.match(/比如\s*[「"'']?([^、,，。！？!?」"'']+)/);
+  if (bihuMatch && bihuMatch[1]) {
+    return `${bihuMatch[1].trim()} 怎么说？`;
+  }
+
+  // "要不要试试 X？" / "想不想学 X？" → 改写为 "X 怎么说？"
+  const tryMatch = text.match(
+    /^(要不要试试|想不想学|要不要|想不想|试试|想学|试着)\s*[「"'']?([^？?」"'']+)[？?]?$/
+  );
+  if (tryMatch && tryMatch[2]) {
+    const target = tryMatch[2].trim();
+    // 已经是完整问句就直接用，否则包装
+    if (/怎么|如何|哪个|什么|多少|吗$|呢$/.test(target)) {
+      return target.replace(/[?？]$/, "") + "？";
+    }
+    return `${target} 用韩语怎么说？`;
+  }
+
+  // 默认：只清理引号和末尾无意义标点
+  return text.replace(/[」"'']/g, "").trim();
 }
 
 // ============ UI ============
@@ -136,14 +233,19 @@ export default function Home() {
   const [userId, setUserId] = useState<string>("");
   const [currentScenario, setCurrentScenario] = useState<string>("01");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lastHookAtRef = useRef<number | null>(null); // 上次收到钩子的时间戳
 
+  // 初始化埋点 + 用户 ID
   useEffect(() => {
+    initAnalytics();
     let uid = localStorage.getItem("onni_user_id");
     if (!uid) {
       uid = `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       localStorage.setItem("onni_user_id", uid);
     }
     setUserId(uid);
+    identifyUser(uid);
   }, []);
 
   // 自动滚到底
@@ -153,7 +255,7 @@ export default function Home() {
     }
   }, [messages, loading]);
 
-  const switchScenario = (scenarioId: string) => {
+  const switchScenario = (scenarioId: string, isInitial = false) => {
     const scenario = scenarios.find((s) => s.id === scenarioId);
     if (!scenario) return;
 
@@ -165,21 +267,67 @@ export default function Home() {
         content: `${scenario.opening}\n\n（${scenario.openingTranslation}）\n\n👇 试着回一句韩语吧～`,
       },
     ]);
+    lastHookAtRef.current = Date.now(); // 场景切换后开场白也是个钩子
+
+    if (!isInitial) {
+      track("scenario_selected", {
+        scenario_id: scenarioId,
+        scenario_name: scenario.name,
+      });
+    }
   };
 
   useEffect(() => {
-    if (userId) switchScenario("01");
+    if (userId) switchScenario("01", true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  async function sendMessage() {
-    if (!input.trim() || !userId || loading) return;
+  // 钩子点击 → 填充输入框 + 埋点
+  const handleHookClick = (hookText: string) => {
+    const query = extractHookQuery(hookText);
+    setInput(query);
+    inputRef.current?.focus();
+    track("hook_clicked", {
+      hook_text: hookText.slice(0, 100),
+      scenario_id: currentScenario,
+    });
+  };
 
-    const userMsg: Message = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMsg]);
-    const query = input;
-    setInput("");
+  // 核心：把发送逻辑抽出来，便于重试复用
+  async function sendQueryToBackend(query: string, isRetry = false) {
+    if (!userId) return;
+
+    // 首次发送时才 push user msg + 埋点，重试时跳过（避免重复气泡）
+    if (!isRetry) {
+      const userMsg: Message = { role: "user", content: query };
+      setMessages((prev) => [...prev, userMsg]);
+
+      const timeSinceHook = lastHookAtRef.current
+        ? Date.now() - lastHookAtRef.current
+        : null;
+      track("message_sent", {
+        scenario_id: currentScenario,
+        message_length: query.length,
+        contains_korean: /[ㄱ-힝]/.test(query),
+        time_since_hook_ms: timeSinceHook,
+      });
+      if (timeSinceHook !== null && timeSinceHook <= 30000) {
+        track("hook_followup", {
+          scenario_id: currentScenario,
+          seconds_since_hook: Math.round(timeSinceHook / 1000),
+        });
+      }
+    } else {
+      // 重试时先移除上一条失败消息
+      setMessages((prev) => prev.filter((m) => !m.retryable));
+    }
+
     setLoading(true);
+    const startedAt = Date.now();
+
+    // 45 秒超时保护（给 Coze 一些缓冲，避免误判超时）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
       const res = await fetch("/api/chat", {
@@ -191,12 +339,16 @@ export default function Home() {
           userId,
           conversationId,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
+      const latency = Date.now() - startedAt;
 
       if (data.is_restricted) {
         setMessages((prev) => [...prev, { role: "assistant", content: data.onni_reply }]);
+        track("restricted_topic", { scenario_id: currentScenario });
         return;
       }
 
@@ -209,14 +361,58 @@ export default function Home() {
         } catch {}
       }
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch {
+
+      if (data.onni_reply && data.onni_reply.includes("👇")) {
+        lastHookAtRef.current = Date.now();
+      } else {
+        lastHookAtRef.current = null;
+      }
+
+      track("onni_replied", {
+        scenario_id: currentScenario,
+        latency_ms: latency,
+        reply_length: (data.onni_reply || "").length,
+        has_hook: (data.onni_reply || "").includes("👇"),
+        has_correction: !!data.correction_card,
+      });
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      const isTimeout = e?.name === "AbortError";
+      const errorContent = isTimeout
+        ? "Onni 有点跟不上啦～ ⏱️ 网络或模型响应慢，点下方重试一下吧"
+        : "网络不太给力，稍等再试～ 🥺";
+
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "网络不太给力，等一下再试～ 🥺" },
+        {
+          role: "assistant",
+          content: errorContent,
+          retryable: true,
+          retryQuery: query,
+        },
       ]);
+      track("chat_error", {
+        scenario_id: currentScenario,
+        is_timeout: isTimeout,
+        error: String(e).slice(0, 200),
+      });
     } finally {
       setLoading(false);
     }
+  }
+
+  // 首次发送入口（从输入框触发）
+  function sendMessage() {
+    if (!input.trim() || !userId || loading) return;
+    const query = input;
+    setInput("");
+    sendQueryToBackend(query, false);
+  }
+
+  // 重试入口（点击重试按钮触发）
+  function handleRetry(retryQuery: string) {
+    if (loading) return;
+    sendQueryToBackend(retryQuery, true);
   }
 
   const currentScene = scenarios.find((s) => s.id === currentScenario);
@@ -235,7 +431,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 场景选择器 */}
         <div style={styles.chipRow}>
           <div style={styles.chipInner}>
             {scenarios.map((s) => {
@@ -262,7 +457,9 @@ export default function Home() {
       <div style={styles.sceneBar}>
         <span style={styles.sceneBarText}>
           <span style={{ fontSize: 14 }}>{currentScene?.emoji}</span>
-          <span>当前场景：<strong style={{ color: "var(--ink)" }}>{currentScene?.name}</strong></span>
+          <span>
+            当前场景：<strong style={{ color: "var(--ink)" }}>{currentScene?.name}</strong>
+          </span>
           <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>· {messages.length} 条对话</span>
         </span>
       </div>
@@ -271,7 +468,12 @@ export default function Home() {
       <main ref={scrollRef} style={styles.chatArea}>
         <div style={styles.chatInner}>
           {messages.map((m, i) => (
-            <MessageBubble key={i} msg={m} />
+            <MessageBubble
+              key={i}
+              msg={m}
+              onHookClick={handleHookClick}
+              onRetry={handleRetry}
+            />
           ))}
           {loading && <TypingIndicator />}
         </div>
@@ -279,10 +481,30 @@ export default function Home() {
 
       {/* === 输入区 === */}
       <footer style={styles.inputBar}>
+        {/* 场景快捷提问（只在对话较少时显示，避免遮挡） */}
+        {currentScene?.starters && messages.length <= 2 && (
+          <div style={styles.startersRow}>
+            {currentScene.starters.map((s, idx) => (
+              <button
+                key={idx}
+                onClick={() => {
+                  setInput(s);
+                  inputRef.current?.focus();
+                }}
+                style={styles.starterChip}
+              >
+                <span style={{ opacity: 0.55, marginRight: 4 }}>💬</span>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div style={styles.inputWrap}>
           <input
+            ref={inputRef}
             style={styles.input}
-            placeholder="想说什么？例：'冰美式怎么说'"
+            placeholder={currentScene?.placeholder || "想说什么？"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
@@ -298,21 +520,26 @@ export default function Home() {
             aria-label="发送"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path
-                d="M3 20L21 12L3 4L3 11L15 12L3 13L3 20Z"
-                fill="currentColor"
-              />
+              <path d="M3 20L21 12L3 4L3 11L15 12L3 13L3 20Z" fill="currentColor" />
             </svg>
           </button>
         </div>
-        <p style={styles.footerHint}>💡 输入韩语句子 Onni 会帮你纠错；问「XX 怎么说」会给生词卡</p>
+        <p style={styles.footerHint}>💡 点击 👇 问题可以一键跟进；输入韩语句子 Onni 会帮你纠错</p>
       </footer>
     </div>
   );
 }
 
 // ============ 消息气泡 ============
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({
+  msg,
+  onHookClick,
+  onRetry,
+}: {
+  msg: Message;
+  onHookClick: (hook: string) => void;
+  onRetry: (retryQuery: string) => void;
+}) {
   const isUser = msg.role === "user";
   const blocks = isUser ? [] : parseBlocks(msg.content);
 
@@ -337,7 +564,15 @@ function MessageBubble({ msg }: { msg: Message }) {
           <span style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>나</span>
         </div>
       )}
-      <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 8, alignItems: isUser ? "flex-end" : "flex-start" }}>
+      <div
+        style={{
+          maxWidth: "78%",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          alignItems: isUser ? "flex-end" : "flex-start",
+        }}
+      >
         {isUser ? (
           <div style={styles.userBubble}>{msg.content}</div>
         ) : (
@@ -345,7 +580,7 @@ function MessageBubble({ msg }: { msg: Message }) {
             {blocks.length === 0 ? (
               <div style={styles.aiBubble}>{msg.content}</div>
             ) : (
-              blocks.map((b, idx) => <BlockCard key={idx} block={b} />)
+              blocks.map((b, idx) => <BlockCard key={idx} block={b} onHookClick={onHookClick} />)
             )}
           </>
         )}
@@ -359,13 +594,28 @@ function MessageBubble({ msg }: { msg: Message }) {
             <pre style={styles.pre}>{JSON.stringify(msg.correctionCard, null, 2)}</pre>
           </div>
         )}
+
+        {msg.retryable && msg.retryQuery && (
+          <button
+            onClick={() => onRetry(msg.retryQuery!)}
+            style={styles.retryBtn}
+          >
+            <span style={{ marginRight: 4 }}>🔄</span> 重试
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
 // ============ 分块渲染 ============
-function BlockCard({ block }: { block: Block }) {
+function BlockCard({
+  block,
+  onHookClick,
+}: {
+  block: Block;
+  onHookClick: (hook: string) => void;
+}) {
   switch (block.type) {
     case "text":
       return <div style={styles.aiBubble}>{block.content}</div>;
@@ -400,8 +650,41 @@ function BlockCard({ block }: { block: Block }) {
         </div>
       );
     case "hook":
-      return <div style={styles.hookBubble}>{block.content}</div>;
+      return <HookButton content={block.content} onClick={onHookClick} />;
   }
+}
+
+// ============ 钩子按钮 ============
+function HookButton({
+  content,
+  onClick,
+}: {
+  content: string;
+  onClick: (hook: string) => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <button
+      onClick={() => onClick(content)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => {
+        setHover(false);
+        setPressed(false);
+      }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      style={{
+        ...styles.hookButton,
+        ...(hover ? styles.hookButtonHover : {}),
+        ...(pressed ? styles.hookButtonPressed : {}),
+      }}
+    >
+      <span style={{ flex: 1, textAlign: "left" }}>{content}</span>
+      <span style={styles.hookArrow}>→</span>
+    </button>
+  );
 }
 
 // ============ Loading 打字动画 ============
@@ -431,7 +714,6 @@ const styles: Record<string, CSSProperties> = {
     position: "relative",
   },
 
-  // === Header ===
   header: {
     padding: "20px 20px 0",
     flexShrink: 0,
@@ -474,7 +756,6 @@ const styles: Record<string, CSSProperties> = {
     marginTop: 2,
   },
 
-  // === 场景 chip 行 ===
   chipRow: {
     marginTop: 4,
     marginLeft: -20,
@@ -511,7 +792,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 4px 14px var(--brand-glow)",
   },
 
-  // === 场景条 ===
   sceneBar: {
     padding: "10px 20px 6px",
     flexShrink: 0,
@@ -528,7 +808,6 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid var(--border)",
   },
 
-  // === 消息区 ===
   chatArea: {
     flex: 1,
     overflowY: "auto",
@@ -562,7 +841,6 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 4px 12px rgba(124, 109, 255, 0.25)",
   },
 
-  // === 气泡 ===
   userBubble: {
     background: "linear-gradient(135deg, var(--brand) 0%, #FF8FA8 100%)",
     color: "#fff",
@@ -587,19 +865,43 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "var(--shadow-sm)",
     border: "1px solid var(--border)",
   },
-  hookBubble: {
+
+  // === 钩子按钮 ===
+  hookButton: {
     background: "linear-gradient(135deg, var(--brand-soft) 0%, #FFF0E5 100%)",
     color: "var(--brand-dark)",
-    padding: "10px 16px",
+    padding: "12px 16px",
     borderRadius: 14,
     fontSize: 14,
     fontWeight: 500,
     lineHeight: 1.5,
-    whiteSpace: "pre-wrap",
-    border: "1px solid rgba(255, 107, 138, 0.15)",
+    border: "1px solid rgba(255, 107, 138, 0.2)",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    textAlign: "left",
+    width: "100%",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 8px rgba(255, 107, 138, 0.08)",
+  },
+  hookButtonHover: {
+    background: "linear-gradient(135deg, #FFD4E0 0%, #FFE8D4 100%)",
+    borderColor: "rgba(255, 107, 138, 0.4)",
+    boxShadow: "0 4px 14px rgba(255, 107, 138, 0.18)",
+    transform: "translateY(-1px)",
+  },
+  hookButtonPressed: {
+    transform: "translateY(0) scale(0.98)",
+    boxShadow: "0 2px 6px rgba(255, 107, 138, 0.12)",
+  },
+  hookArrow: {
+    fontSize: 16,
+    fontWeight: 600,
+    color: "var(--brand)",
+    flexShrink: 0,
   },
 
-  // === 卡片 ===
   vocabCard: {
     background: "linear-gradient(135deg, #FDFBFF 0%, var(--accent-soft) 100%)",
     borderRadius: 14,
@@ -644,11 +946,50 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "SFMono-Regular, Menlo, Consolas, monospace",
   },
 
-  // === 输入区 ===
   inputBar: {
     padding: "12px 20px 20px",
     background: "linear-gradient(180deg, transparent 0%, var(--bg-warm) 40%)",
     flexShrink: 0,
+  },
+  startersRow: {
+    display: "flex",
+    gap: 8,
+    overflowX: "auto",
+    paddingBottom: 10,
+    marginLeft: -4,
+    marginRight: -4,
+    paddingLeft: 4,
+    paddingRight: 4,
+    scrollbarWidth: "none",
+  },
+  starterChip: {
+    flex: "0 0 auto",
+    padding: "8px 14px",
+    borderRadius: "var(--r-pill)",
+    background: "var(--bg-card)",
+    color: "var(--ink-2)",
+    fontSize: 13,
+    fontWeight: 500,
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    whiteSpace: "nowrap",
+    transition: "all 0.15s ease",
+    display: "inline-flex",
+    alignItems: "center",
+  },
+  retryBtn: {
+    marginTop: 4,
+    padding: "6px 14px",
+    borderRadius: "var(--r-pill)",
+    background: "var(--brand-soft)",
+    color: "var(--brand-dark)",
+    fontSize: 13,
+    fontWeight: 500,
+    border: "1px solid rgba(255, 107, 138, 0.25)",
+    display: "inline-flex",
+    alignItems: "center",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
   },
   inputWrap: {
     display: "flex",

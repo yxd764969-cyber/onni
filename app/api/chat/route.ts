@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
     // 5. 轮询等待对话完成（v0.1 简单实现，v0.2 改流式）
     let status = "in_progress";
     let retries = 0;
-    const maxRetries = 60; // 最多轮询 60 次（约 30 秒）
+    const maxRetries = 90; // 最多轮询 90 次（约 45 秒），给 Coze 缓冲
 
     while (status !== "completed" && retries < maxRetries) {
       await new Promise((r) => setTimeout(r, 500));
@@ -154,15 +154,14 @@ export async function POST(req: NextRequest) {
       is_restricted: false,
     };
 
-    // 如果存在纠错卡数据，原样返回（前端会解析 JSON）
+    // 只有当 follow_up 是合法 JSON 时才当纠错卡传给前端
+    // （Coze 的 follow_up 类型默认是"推荐追问"文本，非纠错卡，此时直接忽略）
     if (followUpMsg && followUpMsg.content) {
       try {
-        // 尝试解析一下确认是合法 JSON，但原样返回给前端
         JSON.parse(followUpMsg.content);
         response.correction_card = followUpMsg.content;
       } catch {
-        // 如果 parse 失败，说明不是 JSON 格式，就不作为纠错卡返回
-        console.warn("纠错卡数据不是合法 JSON:", followUpMsg.content);
+        // 非 JSON = Coze 自动生成的推荐追问，不是纠错卡，静默忽略
       }
     }
 
