@@ -332,6 +332,11 @@ function MessageBubble({ msg }: { msg: Message }) {
           <span style={{ fontSize: 18 }}>🌸</span>
         </div>
       )}
+      {isUser && (
+        <div style={styles.userAvatar}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>나</span>
+        </div>
+      )}
       <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 8, alignItems: isUser ? "flex-end" : "flex-start" }}>
         {isUser ? (
           <div style={styles.userBubble}>{msg.content}</div>
@@ -544,6 +549,17 @@ const styles: Record<string, CSSProperties> = {
     flexShrink: 0,
     boxShadow: "var(--shadow-sm)",
     border: "1px solid var(--border)",
+  },
+  userAvatar: {
+    width: 34,
+    height: 34,
+    background: "linear-gradient(135deg, #7C6DFF 0%, #A99CFF 100%)",
+    borderRadius: 12,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    boxShadow: "0 4px 12px rgba(124, 109, 255, 0.25)",
   },
 
   // === 气泡 ===
