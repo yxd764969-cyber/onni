@@ -1,0 +1,174 @@
+/* ===========================
+   Onni 韩语陪练 · 全局样式
+   =========================== */
+
+:root {
+  /* === 品牌色（柔和暖调，K-culture 灵感） === */
+  --bg-warm: #FFF6F0;
+  --bg-warm-2: #FFE9DE;
+  --bg-card: #FFFFFF;
+  --bg-muted: #FAF3EF;
+
+  --brand: #FF6B8A;         /* 主色·珊瑚粉 */
+  --brand-dark: #E8567A;
+  --brand-soft: #FFE0E8;
+  --brand-glow: rgba(255, 107, 138, 0.18);
+
+  --accent: #7C6DFF;        /* 紫，用于生词卡 */
+  --accent-soft: #EFECFF;
+
+  --success: #4CAF88;       /* 绿，用于语法卡 */
+  --success-soft: #E1F5EC;
+
+  --warn: #F5A25D;          /* 橙，用于纠错卡 */
+  --warn-soft: #FFF0E1;
+
+  --ink: #2A2438;           /* 主文本 */
+  --ink-2: #6B6478;         /* 次文本 */
+  --ink-3: #A29DAF;         /* 辅助 */
+  --border: #F0E6DE;
+  --border-strong: #E4D6CB;
+
+  /* === 阴影 === */
+  --shadow-sm: 0 1px 2px rgba(42, 36, 56, 0.04);
+  --shadow-md: 0 4px 12px rgba(42, 36, 56, 0.06);
+  --shadow-lg: 0 12px 32px rgba(255, 107, 138, 0.12);
+
+  /* === 圆角 === */
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Inter', 'Noto Sans SC', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--ink);
+  background: var(--bg-warm);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden; /* 让页面本身不滚动，消息区滚动 */
+}
+
+/* 韩文用 Noto Sans KR 更好看 */
+.korean, [lang="ko"] {
+  font-family: 'Noto Sans KR', 'Inter', sans-serif;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+input, textarea {
+  font-family: inherit;
+  border: none;
+  outline: none;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+
+/* ===========================
+   动画
+   =========================== */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bounce-dot {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ===========================
+   实用类
+   =========================== */
+.msg-enter {
+  animation: msg-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fade-in {
+  animation: fade-in 0.4s ease-out;
+}
+
+.gradient-bg {
+  background:
+    radial-gradient(ellipse at top left, #FFE0E8 0%, transparent 50%),
+    radial-gradient(ellipse at top right, #FFF0DC 0%, transparent 50%),
+    linear-gradient(180deg, #FFF6F0 0%, #FFF9F5 100%);
+  background-attachment: fixed;
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--brand);
+  border-radius: 50%;
+  margin: 0 2px;
+  animation: bounce-dot 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.30s; }
+
+/* ===========================
+   移动端适配
+   =========================== */
+@media (max-width: 640px) {
+  :root {
+    --r-md: 14px;
+    --r-lg: 16px;
+  }
+}
