@@ -90,14 +90,21 @@ type Block =
 function parseBlocks(raw: string): Block[] {
   if (!raw) return [];
 
-  // 清洗 markdown 符号：AI 有时会输出 ### / ▶ / --- 这类
+  // 清洗 markdown 和 AI 泄漏的内部标签
   raw = raw
     .replace(/```[a-z]*\n?/gi, "")
     .replace(/```/g, "")
     .replace(/^#{1,6}\s*/gm, "") // 去掉行首 ### / ## / #
     .replace(/^▶\s*/gm, "· ") // ▶ 转成 ·
     .replace(/^---+$/gm, "") // 单独一行的 ---
-    .replace(/\*\*(.+?)\*\*/g, "$1"); // 去掉 **粗体**
+    .replace(/\*\*(.+?)\*\*/g, "$1") // 去掉 **粗体**
+    // 剥掉 AI 泄漏的段落标签（这些是 prompt 里的内部命名，不该被输出）
+    .replace(/^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(场景例句|生词卡片|关键词卡片|语法(小贴士|点讲解|点)?|互动引导|温柔纠错|钩子问题|钩子|例句)?\s*[（(][^）)]*[）)]?\s*[：:]?\s*$/gm, "")
+    .replace(/^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(场景例句|生词卡片|关键词卡片|语法(小贴士|点讲解|点)?|互动引导|温柔纠错|钩子问题|钩子|例句)\s*[：:]?\s*/gm, "")
+    // 去掉钩子里的教学铺垫（"下次...可以..." / "这样能..." / "以后..."）
+    .replace(/👇\s*.*?[。.～~]\s*(要不要试试|要不要试着|要不要|想不想)/g, "👇 $1")
+    // 去掉多余空行
+    .replace(/\n{3,}/g, "\n\n");
 
   const lines = raw.split("\n");
   const blocks: Block[] = [];
@@ -214,8 +221,21 @@ function parseBlocks(raw: string): Block[] {
 function extractHookQuery(hookText: string): string {
   let text = hookText.replace(/^👇\s*/, "").trim();
 
-  // 去掉末尾的 emoji（避免污染 query）
+  // 剥掉泄漏的段落标签（如 "④ 互动引导"）
+  text = text
+    .replace(/^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(互动引导|钩子问题|钩子|场景例句|生词卡片|语法小贴士|温柔纠错)?\s*[：:]?\s*/g, "")
+    .trim();
+
+  // 去掉末尾的 emoji
   text = text.replace(/[🎯☕🛍️🚇👋🌸😉👍🎓💡✨🎉📇📚]+\s*$/g, "").trim();
+
+  // 去掉教学铺垫（"下次...就可以... 要不要..." → 只保留"要不要..."部分）
+  const preambleMatch = text.match(/^.*?[。.～~]\s*(要不要试试|要不要试着|要不要|想不想学|想不想|试试|想学|试着)\s*(.+)$/);
+  if (preambleMatch && preambleMatch[2]) {
+    text = preambleMatch[1] + " " + preambleMatch[2];
+    // 只保留铺垫后的问句
+    text = preambleMatch[2].trim();
+  }
 
   // 复合问句：包含 "或者" 拆分的两段问题 → 只取第一段
   const orSplit = text.split(/[?？]\s*[，,]?\s*或者[^？?]*[?？]?/);
