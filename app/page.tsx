@@ -197,21 +197,61 @@ function parseBlocks(raw: string): Block[] {
 
   const filtered = blocks.filter((b) => b.content.length > 0);
 
-  // 兜底：如果最后一个 block 是 text 且看起来像追问，自动升级为 hook
+  // 兜底：检查最后一个 text block 的【最后一段】（不是整个 block）
+  // 因为 AI 常把追问和其他内容混在一起，需要从段落粒度切出钩子
   if (filtered.length > 0) {
     const last = filtered[filtered.length - 1];
     if (last.type === "text") {
-      const trimmed = last.content.trim();
-      const hasQuestionMark = /[？?]/.test(trimmed);
-      const hasFollowupCue =
-        /(吗|呢|还想|还有|比如|试试|要不要|想学|下一句|怎么说|哪个|想不想|要不|试着)/.test(trimmed);
-      const lengthOk = trimmed.length >= 4 && trimmed.length < 150;
+      const lines = last.content.split(/\n/);
 
-      if (hasQuestionMark && hasFollowupCue && lengthOk) {
-        filtered[filtered.length - 1] = {
-          type: "hook",
-          content: trimmed.startsWith("👇") ? trimmed : `👇 ${trimmed}`,
-        };
+      // 从底部向上找"最后一段"（空行分隔）
+      const lastPara: string[] = [];
+      let hitBlank = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const l = lines[i].trim();
+        if (l === "") {
+          if (lastPara.length > 0) {
+            hitBlank = true;
+            break;
+          }
+        } else {
+          lastPara.unshift(lines[i]);
+        }
+      }
+
+      const paraText = lastPara.join("\n").trim();
+      const beforeText = lines
+        .slice(0, lines.length - lastPara.length)
+        .join("\n")
+        .trim();
+
+      // 检测这一段像不像钩子
+      const hasQuestionMark = /[？?]/.test(paraText);
+      const startsWithHookCue = /^(要不要|想不想|试试|来试试|试着|想学|来练|来说说|你也|你能|你会)/.test(paraText);
+      const hasFollowupCue =
+        /(吗|呢|还想|还有|比如|试试|要不要|想学|下一句|怎么说|哪个|想不想|要不|试着)/.test(paraText);
+      // 软结尾：以呀/吧/哦/嘛/～ + 可选 emoji 结尾
+      const hasSoftEnding = /[呀吧哦嘛~～!！]\s*[😊😉👍✨🌸💡🎉☕🛍️🚇👋]*\s*$/.test(paraText);
+      const lengthOk = paraText.length >= 4 && paraText.length < 100;
+
+      // 三种情况判定为钩子：
+      // A) 含问号 + 追问词 + 长度合适
+      // B) 以强钩子词开头 + 软结尾（呀/吧/哦...）+ 长度合适
+      // C) 以强钩子词开头 + 含问号
+      const isHook =
+        (hasQuestionMark && hasFollowupCue && lengthOk) ||
+        (startsWithHookCue && hasSoftEnding && lengthOk) ||
+        (startsWithHookCue && hasQuestionMark && lengthOk);
+
+      if (isHook && paraText.length > 0) {
+        const hookContent = paraText.startsWith("👇") ? paraText : `👇 ${paraText}`;
+        // 如果前面还有内容 → 拆成两个 block；否则整个升级
+        if (beforeText && hitBlank) {
+          filtered[filtered.length - 1] = { type: "text", content: beforeText };
+          filtered.push({ type: "hook", content: hookContent });
+        } else {
+          filtered[filtered.length - 1] = { type: "hook", content: hookContent };
+        }
       }
     }
   }
@@ -275,6 +315,12 @@ function extractHookQuery(hookText: string): string {
   const orSplit = text.split(/[?？]\s*[，,]?\s*或者[^？?]*[?？]?/);
   if (orSplit.length > 1 && orSplit[0].length > 0) {
     text = orSplit[0].trim() + "？";
+  }
+
+  // 引号内的具体句子 → "要不要试试'你好我叫XX'呀" → "你好我叫XX 用韩语怎么说？"
+  const quoteMatch = text.match(/[「""'']([^「」""'']{2,60})[」""'']/);
+  if (quoteMatch && quoteMatch[1]) {
+    return `${quoteMatch[1].trim()} 用韩语怎么说？`;
   }
 
   // "还有 XX 想学吗？比如 A、B、C" → 抽取第一个选项
