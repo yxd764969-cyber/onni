@@ -98,10 +98,13 @@ function parseBlocks(raw: string): Block[] {
     .replace(/^▶\s*/gm, "· ") // ▶ 转成 ·
     .replace(/^---+$/gm, "") // 单独一行的 ---
     .replace(/\*\*(.+?)\*\*/g, "$1") // 去掉 **粗体**
-    // 剥掉 AI 泄漏的段落标签（这些是 prompt 里的内部命名，不该被输出）
+    // 剥掉 AI 泄漏的段落标签
     .replace(/^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(场景例句|生词卡片|关键词卡片|语法(小贴士|点讲解|点)?|互动引导|温柔纠错|钩子问题|钩子|例句)?\s*[（(][^）)]*[）)]?\s*[：:]?\s*$/gm, "")
     .replace(/^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(场景例句|生词卡片|关键词卡片|语法(小贴士|点讲解|点)?|互动引导|温柔纠错|钩子问题|钩子|例句)\s*[：:]?\s*/gm, "")
-    // 去掉钩子里的教学铺垫（"下次...可以..." / "这样能..." / "以后..."）
+    // 关键修复：如果 👇 后紧跟数字编号（"2." "3." "①②③"），说明是错放，还原成普通编号
+    .replace(/👇\s*(\d+\s*[.、．])/g, "$1")
+    .replace(/👇\s*([①②③④⑤⑥⑦⑧⑨⑩])/g, "$1")
+    // 去掉钩子里的教学铺垫
     .replace(/👇\s*.*?[。.～~]\s*(要不要试试|要不要试着|要不要|想不想)/g, "👇 $1")
     // 去掉多余空行
     .replace(/\n{3,}/g, "\n\n");
@@ -195,7 +198,6 @@ function parseBlocks(raw: string): Block[] {
   const filtered = blocks.filter((b) => b.content.length > 0);
 
   // 兜底：如果最后一个 block 是 text 且看起来像追问，自动升级为 hook
-  // 判定条件：含问号（不必须结尾）+ 长度合适 + 含追问关键词
   if (filtered.length > 0) {
     const last = filtered[filtered.length - 1];
     if (last.type === "text") {
@@ -210,6 +212,38 @@ function parseBlocks(raw: string): Block[] {
           type: "hook",
           content: trimmed.startsWith("👇") ? trimmed : `👇 ${trimmed}`,
         };
+      }
+    }
+  }
+
+  // 关键修复 2：如果钩子超长（>60 字）或含多个问号，只保留最后一句问句
+  // 这样即使 AI 把整段解释都放进钩子，前端也能救回来
+  for (let i = 0; i < filtered.length; i++) {
+    const b = filtered[i];
+    if (b.type !== "hook") continue;
+
+    const raw = b.content.replace(/^👇\s*/, "").trim();
+    const questionMarks = (raw.match(/[？?]/g) || []).length;
+
+    // 触发条件：长度超 60 字 或 含 2+ 个问号 → 只取最后一句问句
+    if (raw.length > 60 || questionMarks >= 2) {
+      // 按标点分割成句子
+      const sentences = raw.split(/[。！!]|\s+—\s+|(?<=[？?])\s*/).filter(s => s.trim().length > 0);
+      // 找到最后一个含问号的短句
+      let lastQuestion = "";
+      for (let j = sentences.length - 1; j >= 0; j--) {
+        const s = sentences[j].trim();
+        if (/[？?]/.test(s) && s.length <= 40) {
+          lastQuestion = s;
+          break;
+        }
+      }
+      // 如果没找到合适的短问句，退回把这个 block 变成普通文本
+      if (lastQuestion) {
+        filtered[i] = { type: "hook", content: `👇 ${lastQuestion}` };
+      } else {
+        // 拿不到干净的钩子 → 干脆当成普通文本渲染，不显示钩子按钮
+        filtered[i] = { type: "text", content: raw };
       }
     }
   }
