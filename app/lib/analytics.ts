@@ -53,7 +53,8 @@ export type EventName =
   | "hook_clicked"           // 用户点了钩子问题
   | "hook_followup"          // 用户看到钩子 30s 内发了下一条
   | "chat_error"             // 请求失败
-  | "restricted_topic";      // 触发敏感话题拦截
+  | "restricted_topic"       // 触发敏感话题拦截
+  | "message_feedback";      // 👍/👎 单条消息评价
 
 /**
  * 发送事件到 PostHog

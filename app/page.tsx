@@ -77,6 +77,8 @@ type Message = {
   correctionCard?: any;
   retryable?: boolean; // 出错时可点重试
   retryQuery?: string; // 出错时保存原始 query 供重试
+  isAnswer?: boolean; // 是否是真实 API 回复（非开场白/错误提示），只有这类才显示👍👎
+  feedback?: "positive" | "negative"; // 用户对此条消息的评价
 };
 
 // ============ 智能内容解析 ============
@@ -411,6 +413,30 @@ export default function Home() {
     });
   };
 
+  // 👍/👎 微反馈 → 埋点 + 更新气泡状态
+  const handleFeedback = (msgIndex: number, rating: "positive" | "negative") => {
+    const msg = messages[msgIndex];
+    if (!msg || msg.feedback) return; // 已评过就不再重复
+
+    setMessages((prev) => {
+      const next = [...prev];
+      next[msgIndex] = { ...next[msgIndex], feedback: rating };
+      return next;
+    });
+
+    const content = msg.content || "";
+    track("message_feedback", {
+      rating,
+      scenario_id: currentScenario,
+      message_index: msgIndex,
+      reply_length: content.length,
+      has_hook: content.includes("👇"),
+      has_vocab: /(📇|关键词|生词)/.test(content),
+      has_grammar: /(📚|语法)/.test(content),
+      has_correction: /🌸/.test(content) || !!msg.correctionCard,
+    });
+  };
+
   // 核心：把发送逻辑抽出来，便于重试复用
   async function sendQueryToBackend(query: string, isRetry = false) {
     if (!userId) return;
@@ -472,7 +498,11 @@ export default function Home() {
 
       if (data.conversation_id) setConversationId(data.conversation_id);
 
-      const assistantMsg: Message = { role: "assistant", content: data.onni_reply };
+      const assistantMsg: Message = {
+        role: "assistant",
+        content: data.onni_reply,
+        isAnswer: true, // 真实 API 回复，允许 👍/👎 打分
+      };
       if (data.correction_card) {
         try {
           assistantMsg.correctionCard = JSON.parse(data.correction_card);
@@ -589,8 +619,10 @@ export default function Home() {
             <MessageBubble
               key={i}
               msg={m}
+              msgIndex={i}
               onHookClick={handleHookClick}
               onRetry={handleRetry}
+              onFeedback={handleFeedback}
             />
           ))}
           {loading && <TypingIndicator />}
@@ -651,12 +683,16 @@ export default function Home() {
 // ============ 消息气泡 ============
 function MessageBubble({
   msg,
+  msgIndex,
   onHookClick,
   onRetry,
+  onFeedback,
 }: {
   msg: Message;
+  msgIndex: number;
   onHookClick: (hook: string) => void;
   onRetry: (retryQuery: string) => void;
+  onFeedback: (msgIndex: number, rating: "positive" | "negative") => void;
 }) {
   const isUser = msg.role === "user";
   const blocks = isUser ? [] : parseBlocks(msg.content);
@@ -720,6 +756,39 @@ function MessageBubble({
           >
             <span style={{ marginRight: 4 }}>🔄</span> 重试
           </button>
+        )}
+
+        {/* 👍/👎 微反馈：只对真实 API 回复显示 */}
+        {!isUser && msg.isAnswer && (
+          <div style={styles.feedbackRow}>
+            <button
+              onClick={() => onFeedback(msgIndex, "positive")}
+              disabled={!!msg.feedback}
+              style={{
+                ...styles.feedbackBtn,
+                ...(msg.feedback === "positive" ? styles.feedbackBtnActivePos : {}),
+                ...(msg.feedback && msg.feedback !== "positive" ? styles.feedbackBtnFaded : {}),
+              }}
+              aria-label="有帮助"
+            >
+              👍 <span style={{ marginLeft: 4, fontSize: 11 }}>有用</span>
+            </button>
+            <button
+              onClick={() => onFeedback(msgIndex, "negative")}
+              disabled={!!msg.feedback}
+              style={{
+                ...styles.feedbackBtn,
+                ...(msg.feedback === "negative" ? styles.feedbackBtnActiveNeg : {}),
+                ...(msg.feedback && msg.feedback !== "negative" ? styles.feedbackBtnFaded : {}),
+              }}
+              aria-label="不太行"
+            >
+              👎 <span style={{ marginLeft: 4, fontSize: 11 }}>不太行</span>
+            </button>
+            {msg.feedback && (
+              <span style={styles.feedbackThanks}>谢谢反馈 🌸</span>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -1108,6 +1177,51 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     cursor: "pointer",
     transition: "all 0.15s ease",
+  },
+
+  // === 微反馈 👍/👎 ===
+  feedbackRow: {
+    marginTop: 6,
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  },
+  feedbackBtn: {
+    padding: "5px 10px",
+    borderRadius: "var(--r-pill)",
+    background: "transparent",
+    color: "var(--ink-3)",
+    fontSize: 13,
+    fontWeight: 500,
+    border: "1px solid var(--border)",
+    display: "inline-flex",
+    alignItems: "center",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+  },
+  feedbackBtnActivePos: {
+    background: "linear-gradient(135deg, #E1F5EC 0%, #F0FAF5 100%)",
+    color: "var(--success)",
+    borderColor: "rgba(76, 175, 136, 0.35)",
+    fontWeight: 600,
+    cursor: "default",
+  },
+  feedbackBtnActiveNeg: {
+    background: "linear-gradient(135deg, #FFF0E5 0%, #FFF7F0 100%)",
+    color: "var(--warn)",
+    borderColor: "rgba(245, 162, 93, 0.35)",
+    fontWeight: 600,
+    cursor: "default",
+  },
+  feedbackBtnFaded: {
+    opacity: 0.35,
+    cursor: "default",
+  },
+  feedbackThanks: {
+    marginLeft: 4,
+    fontSize: 11,
+    color: "var(--ink-3)",
+    fontStyle: "italic",
   },
   inputWrap: {
     display: "flex",
