@@ -197,11 +197,12 @@ function parseBlocks(raw: string): Block[] {
 
   const filtered = blocks.filter((b) => b.content.length > 0);
 
-  // 兜底：检查最后一个 text block 的【最后一段】（不是整个 block）
-  // 因为 AI 常把追问和其他内容混在一起，需要从段落粒度切出钩子
+  // 兜底：检查最后一个 block 的【最后一段】——不管是 text / vocab / grammar / correction
+  // 因为 AI 常把追问混进语法/生词卡里，需要从段落粒度切出钩子
   if (filtered.length > 0) {
     const last = filtered[filtered.length - 1];
-    if (last.type === "text") {
+    // 已经是 hook 就不处理
+    if (last.type !== "hook") {
       const lines = last.content.split(/\n/);
 
       // 从底部向上找"最后一段"（空行分隔）
@@ -230,14 +231,9 @@ function parseBlocks(raw: string): Block[] {
       const startsWithHookCue = /^(要不要|想不想|试试|来试试|试着|想学|来练|来说说|你也|你能|你会)/.test(paraText);
       const hasFollowupCue =
         /(吗|呢|还想|还有|比如|试试|要不要|想学|下一句|怎么说|哪个|想不想|要不|试着)/.test(paraText);
-      // 软结尾：以呀/吧/哦/嘛/～ + 可选 emoji 结尾
       const hasSoftEnding = /[呀吧哦嘛~～!！]\s*[😊😉👍✨🌸💡🎉☕🛍️🚇👋]*\s*$/.test(paraText);
       const lengthOk = paraText.length >= 4 && paraText.length < 100;
 
-      // 三种情况判定为钩子：
-      // A) 含问号 + 追问词 + 长度合适
-      // B) 以强钩子词开头 + 软结尾（呀/吧/哦...）+ 长度合适
-      // C) 以强钩子词开头 + 含问号
       const isHook =
         (hasQuestionMark && hasFollowupCue && lengthOk) ||
         (startsWithHookCue && hasSoftEnding && lengthOk) ||
@@ -245,9 +241,9 @@ function parseBlocks(raw: string): Block[] {
 
       if (isHook && paraText.length > 0) {
         const hookContent = paraText.startsWith("👇") ? paraText : `👇 ${paraText}`;
-        // 如果前面还有内容 → 拆成两个 block；否则整个升级
+        // 前面还有内容 → 保持原 block 类型，拆钩子出来；否则整个升级
         if (beforeText && hitBlank) {
-          filtered[filtered.length - 1] = { type: "text", content: beforeText };
+          filtered[filtered.length - 1] = { type: last.type, content: beforeText };
           filtered.push({ type: "hook", content: hookContent });
         } else {
           filtered[filtered.length - 1] = { type: "hook", content: hookContent };
