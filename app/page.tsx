@@ -765,6 +765,9 @@ export default function Home() {
 
       {/* === 输入区 === */}
       <footer style={styles.inputBar}>
+        {/* 提示语放最上面，永远可见（原来在最下面被 Safari 底栏挡住）*/}
+        <p style={styles.footerHint}>💡 点 👇 问题一键跟进 · 输入韩语 Onni 会帮你纠错</p>
+
         {/* 场景快捷提问（只在对话较少时显示，避免遮挡） */}
         {currentScene?.starters && messages.length <= 2 && (
           <div style={styles.startersRow}>
@@ -808,7 +811,6 @@ export default function Home() {
             </svg>
           </button>
         </div>
-        <p style={styles.footerHint}>💡 点击 👇 问题可以一键跟进；输入韩语句子 Onni 会帮你纠错</p>
       </footer>
     </div>
   );
@@ -1403,9 +1405,10 @@ const styles: Record<string, CSSProperties> = {
     cursor: "not-allowed",
   },
   footerHint: {
-    marginTop: 10,
+    marginTop: 0,
+    marginBottom: 8,
     fontSize: 12,
-    color: "var(--ink-2)", // 从最浅的 ink-3 改成中等对比度 ink-2
+    color: "var(--ink-2)",
     textAlign: "center",
     lineHeight: 1.4,
   },
