@@ -141,11 +141,12 @@ export async function POST(req: NextRequest) {
                 );
               }
 
-              // delta：AI 回答的增量文本 → 直接转发内容
+              // delta：AI 回答的增量文本 → 直接转发内容（过滤空内容）
               if (
                 currentEvent === "conversation.message.delta" &&
                 parsed.type === "answer" &&
-                typeof parsed.content === "string"
+                typeof parsed.content === "string" &&
+                parsed.content.length > 0
               ) {
                 controller.enqueue(
                   encoder.encode(
@@ -158,7 +159,8 @@ export async function POST(req: NextRequest) {
               if (
                 currentEvent === "conversation.message.completed" &&
                 parsed.type === "answer" &&
-                typeof parsed.content === "string"
+                typeof parsed.content === "string" &&
+                parsed.content.length > 0
               ) {
                 controller.enqueue(
                   encoder.encode(

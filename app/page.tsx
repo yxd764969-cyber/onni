@@ -570,8 +570,12 @@ export default function Home() {
             setConversationId(parsed.value);
           }
 
-          // 增量文本
-          if (parsed.type === "delta" && typeof parsed.content === "string") {
+          // 增量文本（跳过空内容，避免渲染空气泡）
+          if (
+            parsed.type === "delta" &&
+            typeof parsed.content === "string" &&
+            parsed.content.length > 0
+          ) {
             if (!firstTokenAt) {
               firstTokenAt = Date.now();
               setLoading(false); // 一有字就关掉 loading dots
@@ -584,9 +588,17 @@ export default function Home() {
           }
 
           // 完整消息兜底（如果 delta 出错，用这条覆盖）
-          if (parsed.type === "completed" && typeof parsed.content === "string") {
+          if (
+            parsed.type === "completed" &&
+            typeof parsed.content === "string" &&
+            parsed.content.length > 0
+          ) {
             if (parsed.content.length > assistantContent.length) {
               assistantContent = parsed.content;
+              if (!firstTokenAt) {
+                firstTokenAt = Date.now();
+                setLoading(false);
+              }
               upsertStreamingMessage(assistantContent, true);
             }
           }
