@@ -403,7 +403,7 @@ export default function Home() {
     setMessages([
       {
         role: "assistant",
-        content: `🌸 你好呀！我是 Onni，AI 韩语陪练～\n\n不用会韩语，用中文告诉我就行 💗\n想学什么直接问，比如"冰美式怎么说"\n\n👇 点下方问题一键开始\n（也可以点顶部切换场景）`,
+        content: `你好呀！我是 Onni，AI 韩语陪练 👋\n\n不用会韩语，用中文告诉我就行 💗\n想学什么直接问，比如"冰美式怎么说"\n\n👇 点下方问题一键开始\n（也可以点顶部切换场景）`,
       },
     ]);
     lastHookAtRef.current = Date.now();
@@ -1033,7 +1033,9 @@ function TypingIndicator() {
 // ============ 样式 ============
 const styles: Record<string, CSSProperties> = {
   app: {
-    height: "100vh",
+    // 100dvh：动态视口高度，iOS Safari 会自动排除地址栏，比 100vh 更准
+    height: "100dvh",
+    minHeight: "100vh", // fallback：不支持 dvh 的老浏览器
     display: "flex",
     flexDirection: "column",
     maxWidth: 720,
@@ -1274,7 +1276,8 @@ const styles: Record<string, CSSProperties> = {
   },
 
   inputBar: {
-    padding: "12px 20px 20px",
+    // 底部 padding 加 iPhone 安全区，防止提示语被 home indicator 遮挡
+    padding: "12px 20px calc(20px + env(safe-area-inset-bottom))",
     background: "linear-gradient(180deg, transparent 0%, var(--bg-warm) 40%)",
     flexShrink: 0,
   },
