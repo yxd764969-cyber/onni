@@ -384,7 +384,7 @@ export default function Home() {
     setMessages([
       {
         role: "assistant",
-        content: `${scenario.opening}\n\n（${scenario.openingTranslation}）\n\n👇 试着回一句韩语吧～`,
+        content: `${scenario.opening}\n\n（${scenario.openingTranslation}）\n\n👇 点下方问题开始 · 或用中文问"XX 怎么说"`,
       },
     ]);
     lastHookAtRef.current = Date.now(); // 场景切换后开场白也是个钩子
@@ -397,8 +397,19 @@ export default function Home() {
     }
   };
 
+  // 首次进入用"新手欢迎语"，而不是直接跳进场景
+  const showWelcomeMessage = () => {
+    setMessages([
+      {
+        role: "assistant",
+        content: `🌸 你好呀！我是 Onni，AI 韩语陪练～\n\n不用会韩语，用中文告诉我就行 💗\n想学什么直接问，比如"冰美式怎么说"\n\n👇 点下方问题一键开始\n（也可以点顶部切换场景）`,
+      },
+    ]);
+    lastHookAtRef.current = Date.now();
+  };
+
   useEffect(() => {
-    if (userId) switchScenario("01", true);
+    if (userId) showWelcomeMessage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
