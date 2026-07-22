@@ -1033,9 +1033,9 @@ function TypingIndicator() {
 // ============ 样式 ============
 const styles: Record<string, CSSProperties> = {
   app: {
-    // 100dvh：动态视口高度，iOS Safari 会自动排除地址栏，比 100vh 更准
-    height: "100dvh",
-    minHeight: "100vh", // fallback：不支持 dvh 的老浏览器
+    // 100svh：小视口高度，永远排除浏览器 chrome（比 dvh 更保险）
+    height: "100svh",
+    minHeight: "100vh",
     display: "flex",
     flexDirection: "column",
     maxWidth: 720,
@@ -1276,8 +1276,9 @@ const styles: Record<string, CSSProperties> = {
   },
 
   inputBar: {
-    // 底部 padding 加 iPhone 安全区，防止提示语被 home indicator 遮挡
-    padding: "12px 20px calc(20px + env(safe-area-inset-bottom))",
+    padding: "12px 20px 12px",
+    // iPhone 安全区加到底部，用 paddingBottom 单独写更兼容 React inline style
+    paddingBottom: "max(20px, env(safe-area-inset-bottom))",
     background: "linear-gradient(180deg, transparent 0%, var(--bg-warm) 40%)",
     flexShrink: 0,
   },
@@ -1402,9 +1403,10 @@ const styles: Record<string, CSSProperties> = {
     cursor: "not-allowed",
   },
   footerHint: {
-    marginTop: 8,
-    fontSize: 11,
-    color: "var(--ink-3)",
+    marginTop: 10,
+    fontSize: 12,
+    color: "var(--ink-2)", // 从最浅的 ink-3 改成中等对比度 ink-2
     textAlign: "center",
+    lineHeight: 1.4,
   },
 };
