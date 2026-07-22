@@ -79,6 +79,7 @@ type Message = {
   retryQuery?: string; // 出错时保存原始 query 供重试
   isAnswer?: boolean; // 是否是真实 API 回复（非开场白/错误提示），只有这类才显示👍👎
   feedback?: "positive" | "negative"; // 用户对此条消息的评价
+  streaming?: boolean; // 正在流式输出中（末尾显示闪烁光标 + 不显示👍👎）
 };
 
 // ============ 智能内容解析 ============
@@ -448,11 +449,10 @@ export default function Home() {
     });
   };
 
-  // 核心：把发送逻辑抽出来，便于重试复用
+  // 核心：把发送逻辑抽出来，便于重试复用（流式版）
   async function sendQueryToBackend(query: string, isRetry = false) {
     if (!userId) return;
 
-    // 首次发送时才 push user msg + 埋点，重试时跳过（避免重复气泡）
     if (!isRetry) {
       const userMsg: Message = { role: "user", content: query };
       setMessages((prev) => [...prev, userMsg]);
@@ -473,16 +473,42 @@ export default function Home() {
         });
       }
     } else {
-      // 重试时先移除上一条失败消息
+      // 重试时移除上一条失败消息
       setMessages((prev) => prev.filter((m) => !m.retryable));
     }
 
     setLoading(true);
     const startedAt = Date.now();
+    let firstTokenAt: number | null = null;
 
-    // 45 秒超时保护（给 Coze 一些缓冲，避免误判超时）
+    // 45 秒总超时保护
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+    // 流式内容累积
+    let assistantContent = "";
+    let placeholderAdded = false;
+    let isRestricted = false;
+    let receivedError = false;
+
+    // 便捷：把最后一条 streaming assistant 消息内容更新
+    const upsertStreamingMessage = (content: string, streaming: boolean) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === "assistant" && last.streaming) {
+          next[next.length - 1] = { ...last, content, streaming };
+        } else {
+          next.push({
+            role: "assistant",
+            content,
+            isAnswer: true,
+            streaming,
+          });
+        }
+        return next;
+      });
+    };
 
     try {
       const res = await fetch("/api/chat", {
@@ -496,32 +522,112 @@ export default function Home() {
         }),
         signal: controller.signal,
       });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || !line.startsWith("data:")) continue;
+
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+
+          let parsed: any;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            continue;
+          }
+
+          // 敏感话题拦截
+          if (parsed.type === "restricted") {
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: parsed.content },
+            ]);
+            track("restricted_topic", { scenario_id: currentScenario });
+            isRestricted = true;
+            break;
+          }
+
+          // 会话 id
+          if (parsed.type === "conversation_id" && parsed.value) {
+            setConversationId(parsed.value);
+          }
+
+          // 增量文本
+          if (parsed.type === "delta" && typeof parsed.content === "string") {
+            if (!firstTokenAt) {
+              firstTokenAt = Date.now();
+              setLoading(false); // 一有字就关掉 loading dots
+            }
+            assistantContent += parsed.content;
+            if (!placeholderAdded) {
+              placeholderAdded = true;
+            }
+            upsertStreamingMessage(assistantContent, true);
+          }
+
+          // 完整消息兜底（如果 delta 出错，用这条覆盖）
+          if (parsed.type === "completed" && typeof parsed.content === "string") {
+            if (parsed.content.length > assistantContent.length) {
+              assistantContent = parsed.content;
+              upsertStreamingMessage(assistantContent, true);
+            }
+          }
+
+          // 服务端错误
+          if (parsed.type === "error") {
+            receivedError = true;
+          }
+        }
+
+        if (isRestricted) break;
+      }
+
       clearTimeout(timeoutId);
 
-      const data = await res.json();
-      const latency = Date.now() - startedAt;
+      // 流结束
+      if (isRestricted) return;
 
-      if (data.is_restricted) {
-        setMessages((prev) => [...prev, { role: "assistant", content: data.onni_reply }]);
-        track("restricted_topic", { scenario_id: currentScenario });
-        return;
+      if (receivedError && !assistantContent) {
+        throw new Error("stream error");
       }
 
-      if (data.conversation_id) setConversationId(data.conversation_id);
-
-      const assistantMsg: Message = {
-        role: "assistant",
-        content: data.onni_reply,
-        isAnswer: true, // 真实 API 回复，允许 👍/👎 打分
-      };
-      if (data.correction_card) {
-        try {
-          assistantMsg.correctionCard = JSON.parse(data.correction_card);
-        } catch {}
+      if (!assistantContent) {
+        throw new Error("empty response");
       }
-      setMessages((prev) => [...prev, assistantMsg]);
 
-      if (data.onni_reply && data.onni_reply.includes("👇")) {
+      // 关闭 streaming 状态，转为最终消息
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === "assistant" && last.streaming) {
+          next[next.length - 1] = {
+            ...last,
+            content: assistantContent,
+            streaming: false,
+          };
+        }
+        return next;
+      });
+
+      if (assistantContent.includes("👇")) {
         lastHookAtRef.current = Date.now();
       } else {
         lastHookAtRef.current = null;
@@ -529,14 +635,19 @@ export default function Home() {
 
       track("onni_replied", {
         scenario_id: currentScenario,
-        latency_ms: latency,
-        reply_length: (data.onni_reply || "").length,
-        has_hook: (data.onni_reply || "").includes("👇"),
-        has_correction: !!data.correction_card,
+        latency_ms: Date.now() - startedAt,
+        first_token_ms: firstTokenAt ? firstTokenAt - startedAt : null,
+        reply_length: assistantContent.length,
+        has_hook: assistantContent.includes("👇"),
+        streaming: true,
       });
     } catch (e: any) {
       clearTimeout(timeoutId);
       const isTimeout = e?.name === "AbortError";
+
+      // 移除任何未完成的 streaming 占位
+      setMessages((prev) => prev.filter((m) => !m.streaming));
+
       const errorContent = isTimeout
         ? "Onni 有点跟不上啦～ ⏱️ 网络或模型响应慢，点下方重试一下吧"
         : "网络不太给力，稍等再试～ 🥺";
@@ -740,6 +851,12 @@ function MessageBubble({
       >
         {isUser ? (
           <div style={styles.userBubble}>{msg.content}</div>
+        ) : msg.streaming ? (
+          // 流式中：渲染为单个纯文本气泡 + 光标（不做卡片解析，避免闪烁）
+          <div style={styles.aiBubble}>
+            {msg.content}
+            <span className="stream-cursor" />
+          </div>
         ) : (
           <>
             {blocks.length === 0 ? (
@@ -769,8 +886,8 @@ function MessageBubble({
           </button>
         )}
 
-        {/* 👍/👎 微反馈：只对真实 API 回复显示 */}
-        {!isUser && msg.isAnswer && (
+        {/* 👍/👎 微反馈：真实 API 回复且流式完成后才显示 */}
+        {!isUser && msg.isAnswer && !msg.streaming && (
           <div style={styles.feedbackRow}>
             <button
               onClick={() => onFeedback(msgIndex, "positive")}
